@@ -103,6 +103,7 @@
 
       <div class="options" style="margin-top:12px;">
         <label><input type="checkbox" id="excludeZero" checked> Exclude zero-duration sessions</label>
+        <label><input type="checkbox" id="excludeUnder1" checked> Exclude sessions &lt; 1 minute</label>
         <label><input type="checkbox" id="excludeNA" checked> Exclude "Not Available"</label>
         <label>Top N books
           <select id="topN">
@@ -186,6 +187,7 @@
       lastAgg: null,
       options: {
         excludeZero: true,
+        excludeUnder1: true,
         excludeNA: true,
         topN: Infinity
       }
@@ -195,6 +197,7 @@
       fileInput: document.getElementById('fileInput'),
       dropzone: document.getElementById('dropzone'),
       excludeZero: document.getElementById('excludeZero'),
+      excludeUnder1: document.getElementById('excludeUnder1'),
       excludeNA: document.getElementById('excludeNA'),
       topN: document.getElementById('topN'),
       totalTime: document.getElementById('totalTime'),
@@ -251,6 +254,7 @@
     function filterSessions(rows, options) {
       return rows.filter(r => {
         if (options.excludeZero && r.ms <= 0) return false;
+        if (options.excludeUnder1 && r.ms < 60000) return false;
         if (options.excludeNA && (r.asin === 'Not Available' || r.productName === 'Not Available')) return false;
         if (!r.startDate || !r.endDate) return false;
         return true;
@@ -651,6 +655,7 @@
 
     function applyOptionsAndRender() {
       state.options.excludeZero = els.excludeZero.checked;
+      state.options.excludeUnder1 = els.excludeUnder1.checked;
       state.options.excludeNA = els.excludeNA.checked;
       const n = parseInt(els.topN.value, 10);
       state.options.topN = Number.isFinite(n) && n > 0 ? n : Infinity;
@@ -720,6 +725,7 @@
 
     function setupOptionHandlers() {
       els.excludeZero.addEventListener('change', applyOptionsAndRender);
+      els.excludeUnder1.addEventListener('change', applyOptionsAndRender);
       els.excludeNA.addEventListener('change', applyOptionsAndRender);
       els.topN.addEventListener('change', applyOptionsAndRender);
     }
