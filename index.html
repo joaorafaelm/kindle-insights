@@ -142,13 +142,6 @@
     </div>
   </div>
 
-  <div class="row">
-    <div class="card">
-      <h3>Reading Time per Day</h3>
-      <canvas id="perDayChart"></canvas>
-    </div>
-  </div>
-
   <div class="row two">
     <div class="card">
       <h3>Session Duration Distribution</h3>
@@ -157,6 +150,13 @@
     <div class="card">
       <h3>Sessions by Hour of Day</h3>
       <canvas id="hourChart"></canvas>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h3>Reading Time per Day</h3>
+      <canvas id="perDayChart"></canvas>
     </div>
   </div>
 
@@ -178,6 +178,7 @@
       rawRows: [],
       sessions: [],
       charts: {},
+      perDayFocusLabel: null,
       options: {
         excludeZero: true,
         excludeNA: true,
@@ -358,15 +359,40 @@
         pointRadius: 2
       };
 
+      const datasets = [totalDataset, ...bookDatasets];
+      if (state.perDayFocusLabel) {
+        const has = datasets.some(ds => ds.label === state.perDayFocusLabel);
+        if (has) {
+          for (const ds of datasets) ds.hidden = ds.label !== state.perDayFocusLabel;
+        } else {
+          state.perDayFocusLabel = null;
+        }
+      }
+
       state.charts.perDay = new Chart(els.perDayChart, {
         type: 'line',
         data: {
           labels,
-          datasets: [totalDataset, ...bookDatasets]
+          datasets
         },
         options: {
           responsive: true,
           interaction: { mode: 'nearest', intersect: false },
+          onClick: (evt, elements, chart) => {
+            const pts = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
+            if (!pts.length) return;
+            const idx = pts[0].datasetIndex;
+            const label = chart.data.datasets[idx].label;
+
+            if (state.perDayFocusLabel === label) {
+              state.perDayFocusLabel = null;
+              chart.data.datasets.forEach(ds => { ds.hidden = false; });
+            } else {
+              state.perDayFocusLabel = label;
+              chart.data.datasets.forEach((ds, i) => { ds.hidden = i !== idx; });
+            }
+            chart.update('none');
+          },
           scales: {
             y: { title: { text: 'Hours', display: true }, beginAtZero: true }
           },
