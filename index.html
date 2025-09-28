@@ -11,6 +11,7 @@
       --pad: 14px;
       --muted: color-mix(in srgb, currentColor 50%, transparent);
     }
+    *, *::before, *::after { box-sizing: border-box; }
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
       margin: 0 auto;
@@ -30,12 +31,11 @@
     }
     @media (min-width: 720px) {
       .controls {
-        grid-template-columns: 1fr auto auto auto;
         align-items: end;
       }
     }
     .dropzone {
-      border: 2px dashed var(--muted);
+      border: 1px dashed var(--muted);
       border-radius: 10px;
       padding: 20px;
       text-align: center;
@@ -43,7 +43,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      width: 100%;
+      width: auto;
     }
     .dropzone.dragover {
       border-color: currentColor;
@@ -58,6 +58,7 @@
     @media (min-width: 900px) {
       .row.two { grid-template-columns: 1fr 1fr; }
       .row.three { grid-template-columns: 1fr 1fr 1fr; }
+      .dropzone { width: 100%; }
     }
     .card {
       border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
@@ -181,6 +182,8 @@
       perDayFocusLabel: null,
       histFocusLabel: null,
       hourFocusLabel: null,
+      focusLabel: null,
+      lastAgg: null,
       options: {
         excludeZero: true,
         excludeNA: true,
@@ -355,12 +358,12 @@
 
 
       const datasets = [...bookDatasets];
-      if (state.perDayFocusLabel) {
-        const has = datasets.some(ds => ds.label === state.perDayFocusLabel);
+      if (state.focusLabel) {
+        const has = datasets.some(ds => ds.label === state.focusLabel);
         if (has) {
-          for (const ds of datasets) ds.hidden = ds.label !== state.perDayFocusLabel;
+          for (const ds of datasets) ds.hidden = ds.label !== state.focusLabel;
         } else {
-          state.perDayFocusLabel = null;
+          state.focusLabel = null;
         }
       }
 
@@ -379,14 +382,17 @@
             const idx = pts[0].datasetIndex;
             const label = chart.data.datasets[idx].label;
 
-            if (state.perDayFocusLabel === label) {
-              state.perDayFocusLabel = null;
-              chart.data.datasets.forEach(ds => { ds.hidden = false; });
-            } else {
-              state.perDayFocusLabel = label;
-              chart.data.datasets.forEach((ds, i) => { ds.hidden = i !== idx; });
-            }
-            chart.update('none');
+            state.focusLabel = (state.focusLabel === label) ? null : label;
+
+            const agg = state.lastAgg || aggregate(state.sessions);
+            renderPerDayChart(agg);
+            renderHistogram(agg);
+            renderHourChart(agg);
+            renderPerBookChart(agg);
+            renderPerBookChart(agg);
+            renderPerBookChart(agg);
+            renderPerBookChart(agg);
+            renderPerBookChart(agg);
           },
           scales: {
             y: { title: { text: 'Hours', display: true }, beginAtZero: true }
@@ -414,9 +420,10 @@
       const limit = state.options.topN === Infinity ? allItems.length : state.options.topN;
       const items = allItems.slice(0, limit);
 
-      const labels = items.map(i => i.name.length > 40 ? i.name.slice(0,37) + '…' : i.name);
+      const labels = items.map(i => i.name);
       const data = items.map(i => i.ms / 3600000);
       const colors = items.map((_, i) => `hsl(${(i * 47) % 360} 65% 55%)`);
+      const filteredData = state.focusLabel ? labels.map((lbl, i) => (lbl === state.focusLabel ? data[i] : NaN)) : data;
       els.perBookChart.style.height = Math.max(300, labels.length * 28 + 100) + 'px';
 
       state.charts.perBook = new Chart(els.perBookChart, {
@@ -425,7 +432,7 @@
           labels,
           datasets: [{
             label: 'Hours',
-            data,
+            data: filteredData,
             backgroundColor: colors,
             borderColor: colors,
             borderWidth: 0,
@@ -436,11 +443,29 @@
         options: {
           indexAxis: 'y',
           responsive: true,
+          interaction: { mode: 'nearest', intersect: true },
+          onClick: (evt, elements, chart) => {
+            const pts = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+            if (!pts.length) return;
+            const idx = pts[0].index;
+            const label = chart.data.labels[idx];
+
+            state.focusLabel = (state.focusLabel === label) ? null : label;
+
+            const agg = state.lastAgg || aggregate(state.sessions);
+            renderPerDayChart(agg);
+            renderHistogram(agg);
+            renderHourChart(agg);
+            renderPerBookChart(agg);
+          },
           maintainAspectRatio: false,
           datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.6 } },
           scales: {
             x: { title: { text: 'Hours', display: true }, beginAtZero: true, position: 'top' },
-            y: { ticks: { autoSkip: false }, title: { display: true, text: 'Books' } }
+            y: { ticks: { autoSkip: false, callback: function(value, idx) {
+                  const l = (this.getLabelForValue ? this.getLabelForValue(value) : value);
+                  return (typeof l === 'string' && l.length > 40) ? l.slice(0, 37) + '…' : l;
+                } }, title: { display: true, text: 'Books' } }
           },
           plugins: {
             legend: { display: false },
@@ -493,12 +518,12 @@
       }));
 
       // Apply click-focus state (toggle single dataset visibility)
-      if (state.histFocusLabel) {
-        const has = datasets.some(ds => ds.label === state.histFocusLabel);
+      if (state.focusLabel) {
+        const has = datasets.some(ds => ds.label === state.focusLabel);
         if (has) {
-          for (const ds of datasets) ds.hidden = ds.label !== state.histFocusLabel;
+          for (const ds of datasets) ds.hidden = ds.label !== state.focusLabel;
         } else {
-          state.histFocusLabel = null;
+          state.focusLabel = null;
         }
       }
 
@@ -517,14 +542,12 @@
             const idx = pts[0].datasetIndex;
             const label = chart.data.datasets[idx].label;
 
-            if (state.histFocusLabel === label) {
-              state.histFocusLabel = null;
-              chart.data.datasets.forEach(ds => { ds.hidden = false; });
-            } else {
-              state.histFocusLabel = label;
-              chart.data.datasets.forEach((ds, i) => { ds.hidden = i !== idx; });
-            }
-            chart.update('none');
+            state.focusLabel = (state.focusLabel === label) ? null : label;
+
+            const agg = state.lastAgg || aggregate(state.sessions);
+            renderPerDayChart(agg);
+            renderHistogram(agg);
+            renderHourChart(agg);
           },
           scales: {
             x: { stacked: true },
@@ -567,12 +590,12 @@
       });
 
       // Apply click-focus state (toggle single dataset visibility)
-      if (state.hourFocusLabel) {
-        const has = datasets.some(ds => ds.label === state.hourFocusLabel);
+      if (state.focusLabel) {
+        const has = datasets.some(ds => ds.label === state.focusLabel);
         if (has) {
-          for (const ds of datasets) ds.hidden = ds.label !== state.hourFocusLabel;
+          for (const ds of datasets) ds.hidden = ds.label !== state.focusLabel;
         } else {
-          state.hourFocusLabel = null;
+          state.focusLabel = null;
         }
       }
 
@@ -591,14 +614,12 @@
             const idx = pts[0].datasetIndex;
             const label = chart.data.datasets[idx].label;
 
-            if (state.hourFocusLabel === label) {
-              state.hourFocusLabel = null;
-              chart.data.datasets.forEach(ds => { ds.hidden = false; });
-            } else {
-              state.hourFocusLabel = label;
-              chart.data.datasets.forEach((ds, i) => { ds.hidden = i !== idx; });
-            }
-            chart.update('none');
+            state.focusLabel = (state.focusLabel === label) ? null : label;
+
+            const agg = state.lastAgg || aggregate(state.sessions);
+            renderPerDayChart(agg);
+            renderHistogram(agg);
+            renderHourChart(agg);
           },
           scales: {
             x: { title: { text: 'Hour (local time)', display: true }, stacked: true },
@@ -620,6 +641,7 @@
 
     function renderAll() {
       const agg = aggregate(state.sessions);
+      state.lastAgg = agg;
       renderMetrics(agg);
       renderPerDayChart(agg);
       renderPerBookChart(agg);
