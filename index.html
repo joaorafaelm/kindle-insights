@@ -479,8 +479,10 @@
         arr[idx] += 1;
       }
 
-      // Order books by total reading time (same as other charts), include all
-      const bookEntries = Array.from(agg.perBook.entries()).sort((a, b) => b[1].ms - a[1].ms);
+      // Order books by total reading time (same as other charts), respect topN
+      const allBookEntries = Array.from(agg.perBook.entries()).sort((a, b) => b[1].ms - a[1].ms);
+      const limit = state.options.topN === Infinity ? allBookEntries.length : state.options.topN;
+      const bookEntries = allBookEntries.slice(0, limit);
 
       const datasets = bookEntries.map(([asin, v], i) => ({
         label: v.name,
@@ -548,8 +550,10 @@
 
       const labels = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2,'0') + ':00');
 
-      // One stacked bar per hour with segments for each book (show all books)
-      const bookEntries = Array.from(agg.perBook.entries()).sort((a, b) => b[1].ms - a[1].ms);
+      // One stacked bar per hour with segments for each (top N) book
+      const allBookEntries = Array.from(agg.perBook.entries()).sort((a, b) => b[1].ms - a[1].ms);
+      const limit = state.options.topN === Infinity ? allBookEntries.length : state.options.topN;
+      const bookEntries = allBookEntries.slice(0, limit);
 
       const datasets = bookEntries.map(([asin, v], i) => {
         const data = (agg.perBookHour.get(asin) || new Array(24).fill(0));
