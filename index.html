@@ -179,6 +179,8 @@
       sessions: [],
       charts: {},
       perDayFocusLabel: null,
+      histFocusLabel: null,
+      hourFocusLabel: null,
       options: {
         excludeZero: true,
         excludeNA: true,
@@ -274,6 +276,7 @@
       const perBook = new Map(); // asin -> { name, ms, count }
       const durations = [];
       const hourCounts = new Array(24).fill(0);
+      const perBookHour = new Map();
 
       for (const s of sessions) {
         totalMs += s.ms;
@@ -299,11 +302,15 @@
         // Hour of day from local time
         const hour = s.startDate.getHours();
         hourCounts[hour] += 1;
+        // Per-book hour-of-day counts
+        let arr = perBookHour.get(s.asin);
+        if (!arr) { arr = new Array(24).fill(0); perBookHour.set(s.asin, arr); }
+        arr[hour] += 1;
       }
 
       const uniqueBooks = perBook.size;
 
-      return { totalMs, firstDate, lastDate, uniqueBooks, perDay, perBook, durations, hourCounts };
+      return { totalMs, firstDate, lastDate, uniqueBooks, perDay, perBook, durations, hourCounts, perBookHour };
     }
 
     function destroyChart(key) {
@@ -456,28 +463,82 @@
         { label: '1–2h', min: 60, max: 120 },
         { label: '≥ 2h', min: 120, max: Infinity }
       ];
-      const counts = new Array(bins.length).fill(0);
+      const labels = bins.map(b => b.label);
 
-      for (const ms of agg.durations) {
-        const m = ms / 60000;
-        const idx = bins.findIndex(b => m >= b.min && m < b.max);
-        counts[idx === -1 ? bins.length - 1 : idx] += 1;
+      // Build stacked counts per book across bins (use filtered sessions)
+      const byBookCounts = new Map(); // asin -> number[bins]
+      for (const s of state.sessions) {
+        const m = s.ms / 60000;
+        const bIdx = bins.findIndex(b => m >= b.min && m < b.max);
+        const idx = bIdx === -1 ? bins.length - 1 : bIdx;
+        let arr = byBookCounts.get(s.asin);
+        if (!arr) {
+          arr = new Array(bins.length).fill(0);
+          byBookCounts.set(s.asin, arr);
+        }
+        arr[idx] += 1;
+      }
+
+      // Order books by total reading time (same as other charts), include all
+      const bookEntries = Array.from(agg.perBook.entries()).sort((a, b) => b[1].ms - a[1].ms);
+
+      const datasets = bookEntries.map(([asin, v], i) => ({
+        label: v.name,
+        data: (byBookCounts.get(asin) || new Array(bins.length).fill(0)),
+        backgroundColor: `hsl(${(i * 47) % 360} 65% 55%)`,
+        borderWidth: 0,
+        stack: 'books'
+      }));
+
+      // Apply click-focus state (toggle single dataset visibility)
+      if (state.histFocusLabel) {
+        const has = datasets.some(ds => ds.label === state.histFocusLabel);
+        if (has) {
+          for (const ds of datasets) ds.hidden = ds.label !== state.histFocusLabel;
+        } else {
+          state.histFocusLabel = null;
+        }
       }
 
       state.charts.hist = new Chart(els.histChart, {
         type: 'bar',
         data: {
-          labels: bins.map(b => b.label),
-          datasets: [{
-            label: 'Sessions',
-            data: counts,
-            backgroundColor: '#f28e2b'
-          }]
+          labels,
+          datasets
         },
         options: {
           responsive: true,
-          scales: { y: { beginAtZero: true } },
-          plugins: { legend: { display: false } }
+          interaction: { mode: 'nearest', intersect: true },
+          onClick: (evt, elements, chart) => {
+            const pts = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+            if (!pts.length) return;
+            const idx = pts[0].datasetIndex;
+            const label = chart.data.datasets[idx].label;
+
+            if (state.histFocusLabel === label) {
+              state.histFocusLabel = null;
+              chart.data.datasets.forEach(ds => { ds.hidden = false; });
+            } else {
+              state.histFocusLabel = label;
+              chart.data.datasets.forEach((ds, i) => { ds.hidden = i !== idx; });
+            }
+            chart.update('none');
+          },
+          scales: {
+            x: { stacked: true },
+            y: { beginAtZero: true, stacked: true, title: { display: true, text: 'Sessions' } }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              displayColors: false,
+              callbacks: {
+                // Title shows the bin label
+                // Dataset label is the book name with count
+                label: (ctx) => `${ctx.dataset.label}: ${ctx.raw}`
+              }
+            }
+          }
         }
       });
     }
@@ -486,25 +547,69 @@
       destroyChart('hour');
 
       const labels = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2,'0') + ':00');
-      const data = agg.hourCounts;
+
+      // One stacked bar per hour with segments for each book (show all books)
+      const bookEntries = Array.from(agg.perBook.entries()).sort((a, b) => b[1].ms - a[1].ms);
+
+      const datasets = bookEntries.map(([asin, v], i) => {
+        const data = (agg.perBookHour.get(asin) || new Array(24).fill(0));
+        return {
+          label: v.name,
+          data,
+          backgroundColor: `hsl(${(i * 47) % 360} 65% 55%)`,
+          stack: 'books',
+          borderWidth: 0
+        };
+      });
+
+      // Apply click-focus state (toggle single dataset visibility)
+      if (state.hourFocusLabel) {
+        const has = datasets.some(ds => ds.label === state.hourFocusLabel);
+        if (has) {
+          for (const ds of datasets) ds.hidden = ds.label !== state.hourFocusLabel;
+        } else {
+          state.hourFocusLabel = null;
+        }
+      }
 
       state.charts.hour = new Chart(els.hourChart, {
         type: 'bar',
         data: {
           labels,
-          datasets: [{
-            label: 'Sessions',
-            data,
-            backgroundColor: '#e15759'
-          }]
+          datasets
         },
         options: {
           responsive: true,
-          scales: {
-            x: { title: { text: 'Hour (local time)', display: true } },
-            y: { beginAtZero: true }
+          interaction: { mode: 'nearest', intersect: true },
+          onClick: (evt, elements, chart) => {
+            const pts = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
+            if (!pts.length) return;
+            const idx = pts[0].datasetIndex;
+            const label = chart.data.datasets[idx].label;
+
+            if (state.hourFocusLabel === label) {
+              state.hourFocusLabel = null;
+              chart.data.datasets.forEach(ds => { ds.hidden = false; });
+            } else {
+              state.hourFocusLabel = label;
+              chart.data.datasets.forEach((ds, i) => { ds.hidden = i !== idx; });
+            }
+            chart.update('none');
           },
-          plugins: { legend: { display: false } }
+          scales: {
+            x: { title: { text: 'Hour (local time)', display: true }, stacked: true },
+            y: { beginAtZero: true, stacked: true, title: { display: true, text: 'Sessions' } }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              displayColors: false,
+              callbacks: {
+                // Default title shows the hour label; show book name with count
+                label: (ctx) => `${ctx.dataset.label}: ${ctx.raw}`
+              }
+            }
+          }
         }
       });
     }
