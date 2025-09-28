@@ -328,8 +328,6 @@
 
       const labels = Array.from(agg.perDay.keys()).sort();
 
-      // Total hours per day (all books)
-      const totalData = labels.map(k => (agg.perDay.get(k) || 0) / 3600000);
 
       // Top N books by total reading time
       const allBookEntries = Array.from(agg.perBook.entries()).sort((a, b) => b[1].ms - a[1].ms);
@@ -348,18 +346,8 @@
         fill: false
       }));
 
-      const totalDataset = {
-        label: 'Total',
-        data: totalData,
-        borderColor: '#000',
-        backgroundColor: 'transparent',
-        tension: 0.2,
-        fill: false,
-        borderWidth: 2,
-        pointRadius: 2
-      };
 
-      const datasets = [totalDataset, ...bookDatasets];
+      const datasets = [...bookDatasets];
       if (state.perDayFocusLabel) {
         const has = datasets.some(ds => ds.label === state.perDayFocusLabel);
         if (has) {
