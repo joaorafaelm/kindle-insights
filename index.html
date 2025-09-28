@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Kindle Reading Insights Visualizer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      --gap: 12px;
+      --pad: 14px;
+      --muted: color-mix(in srgb, currentColor 50%, transparent);
+    }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      margin: 0 auto;
+      padding: 20px;
+      max-width: 1200px;
+      line-height: 1.45;
+      overflow-x: hidden;
+    }
+    h1 { margin: 0 0 12px; font-size: 24px; }
+    h3 { margin-top: 0; }
+    .sub { color: var(--muted); margin-bottom: 20px; }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: var(--gap);
+      margin-bottom: 16px;
+    }
+    @media (min-width: 720px) {
+      .controls {
+        grid-template-columns: 1fr auto auto auto;
+        align-items: end;
+      }
+    }
+    .dropzone {
+      border: 2px dashed var(--muted);
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      transition: 0.15s border-color ease-in-out, 0.15s background-color ease-in-out;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+    }
+    .dropzone.dragover {
+      border-color: currentColor;
+      background: color-mix(in srgb, currentColor 8%, transparent);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: var(--gap);
+      margin-top: 16px;
+    }
+    @media (min-width: 900px) {
+      .row.two { grid-template-columns: 1fr 1fr; }
+      .row.three { grid-template-columns: 1fr 1fr 1fr; }
+    }
+    .card {
+      border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+      border-radius: 10px;
+      padding: var(--pad);
+      max-width: 100%;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: var(--gap);
+    }
+    @media (min-width: 720px) {
+      .metrics { grid-template-columns: repeat(4, minmax(0,1fr)); }
+    }
+    .metric .label { color: var(--muted); font-size: 12px; }
+    .metric .value { font-size: 18px; font-weight: 600; }
+    .options { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    .options label { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; }
+    input[type="number"] { width: 80px; padding: 6px 8px; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+    input[type="file"] { max-width: 100%; }
+    canvas { max-height: 420px; width: 100% !important; display: block; }
+    .chart-scroll { max-height: 75vh; overflow-y: auto; max-width: 100%; overflow-x: hidden; }
+    .chart-scroll canvas { max-height: none; }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    footer { margin-top: 24px; color: var(--muted); font-size: 12px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <h1>Kindle Reading Insights</h1>
+  <div class="sub">Upload your Kindle reading-insights-sessions_with_adjustments.csv to view summaries and charts.</div>
+
+  <div class="controls">
+    <div class="dropzone card" id="dropzone">
+      <div><strong>Drop CSV here</strong> or choose a file</div>
+      <div style="margin-top: 10px;">
+        <input type="file" id="fileInput" accept=".csv,text/csv">
+      </div>
+      <div class="hint">The file should have columns: ASIN, product_name, start_time, end_time, total_reading_milliseconds.</div>
+
+      <div class="options" style="margin-top:12px;">
+        <label><input type="checkbox" id="excludeZero" checked> Exclude zero-duration sessions</label>
+        <label><input type="checkbox" id="excludeNA" checked> Exclude "Not Available"</label>
+        <label>Top N books
+          <select id="topN">
+            <option value="">All</option>
+            <option value="5">5</option>
+            <option value="10">10</option>
+            <option value="15">15</option>
+            <option value="20">20</option>
+            <option value="30">30</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <!-- Options moved into dropzone -->
+  </div>
+
+  <div class="card">
+    <div class="metrics">
+      <div class="metric">
+        <div class="label">Total Reading Time</div>
+        <div class="value" id="totalTime">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Sessions</div>
+        <div class="value" id="sessionCount">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Unique Books</div>
+        <div class="value" id="uniqueBooks">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Date Range</div>
+        <div class="value" id="dateRange">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h3>Reading Time per Day</h3>
+      <canvas id="perDayChart"></canvas>
+    </div>
+  </div>
+
+  <div class="row two">
+    <div class="card">
+      <h3>Session Duration Distribution</h3>
+      <canvas id="histChart"></canvas>
+    </div>
+    <div class="card">
+      <h3>Sessions by Hour of Day</h3>
+      <canvas id="hourChart"></canvas>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h3>Top Books by Total Reading Time</h3>
+      <div class="chart-scroll">
+        <canvas id="perBookChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    All processing happens in your browser. No data is uploaded anywhere.
+  </footer>
+
+  <script>
+    const state = {
+      rawRows: [],
+      sessions: [],
+      charts: {},
+      options: {
+        excludeZero: true,
+        excludeNA: true,
+        topN: Infinity
+      }
+    };
+
+    const els = {
+      fileInput: document.getElementById('fileInput'),
+      dropzone: document.getElementById('dropzone'),
+      excludeZero: document.getElementById('excludeZero'),
+      excludeNA: document.getElementById('excludeNA'),
+      topN: document.getElementById('topN'),
+      totalTime: document.getElementById('totalTime'),
+      sessionCount: document.getElementById('sessionCount'),
+      uniqueBooks: document.getElementById('uniqueBooks'),
+      dateRange: document.getElementById('dateRange'),
+      perDayChart: document.getElementById('perDayChart'),
+      perBookChart: document.getElementById('perBookChart'),
+      histChart: document.getElementById('histChart'),
+      hourChart: document.getElementById('hourChart')
+    };
+
+    function humanizeMs(ms) {
+      const sec = Math.floor(ms / 1000);
+      const d = Math.floor(sec / 86400);
+      const h = Math.floor((sec % 86400) / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      const parts = [];
+      if (d) parts.push(d + 'd');
+      if (h || parts.length) parts.push(h + 'h');
+      if (m || parts.length) parts.push(m + 'm');
+      parts.push(s + 's');
+      return parts.join(' ');
+    }
+
+    function parseDate(s) {
+      // Accept ISO strings like 2025-09-27T05:45:58.700Z
+      const d = new Date(s);
+      return isNaN(d) ? null : d;
+    }
+
+    function normalizeRow(row) {
+      // Handle BOM on first header
+      const asin = row.ASIN ?? row['﻿ASIN'] ?? 'Not Available';
+      const productName = row.product_name ?? row['product_name'] ?? 'Not Available';
+      const start = row.start_time ?? row['start_time'] ?? '';
+      const end = row.end_time ?? row['end_time'] ?? '';
+      const msRaw = row.total_reading_milliseconds ?? row['total_reading_milliseconds'] ?? row.total_reading_ms ?? row['total_reading_ms'];
+      const ms = typeof msRaw === 'number' ? msRaw : Number(String(msRaw || '').trim());
+      const startDate = parseDate(start);
+      const endDate = parseDate(end);
+      return {
+        asin: String(asin || 'Not Available'),
+        productName: String(productName || 'Not Available'),
+        startRaw: start,
+        endRaw: end,
+        startDate,
+        endDate,
+        ms: Number.isFinite(ms) ? ms : 0
+      };
+    }
+
+    function filterSessions(rows, options) {
+      return rows.filter(r => {
+        if (options.excludeZero && r.ms <= 0) return false;
+        if (options.excludeNA && (r.asin === 'Not Available' || r.productName === 'Not Available')) return false;
+        if (!r.startDate || !r.endDate) return false;
+        return true;
+      });
+    }
+
+    function aggregate(sessions) {
+      if (!sessions.length) {
+        return {
+          totalMs: 0,
+          firstDate: null,
+          lastDate: null,
+          uniqueBooks: 0,
+          perDay: new Map(),
+          perBook: new Map(),
+          durations: [],
+          hourCounts: new Array(24).fill(0)
+        };
+      }
+
+      let totalMs = 0;
+      let firstDate = sessions[0].startDate;
+      let lastDate = sessions[0].endDate;
+
+      const perDay = new Map(); // yyyy-mm-dd -> ms
+      const perBook = new Map(); // asin -> { name, ms, count }
+      const durations = [];
+      const hourCounts = new Array(24).fill(0);
+
+      for (const s of sessions) {
+        totalMs += s.ms;
+        if (s.startDate < firstDate) firstDate = s.startDate;
+        if (s.endDate > lastDate) lastDate = s.endDate;
+
+        // Per day sum
+        const dayKey = s.startDate.toISOString().slice(0,10);
+        perDay.set(dayKey, (perDay.get(dayKey) || 0) + s.ms);
+
+        // Per book sum
+        const curr = perBook.get(s.asin) || { name: s.productName, ms: 0, count: 0 };
+        curr.ms += s.ms;
+        curr.count += 1;
+        // Prefer the longest non-"Not Available" name seen
+        if (s.productName !== 'Not Available' && curr.name === 'Not Available') curr.name = s.productName;
+        perBook.set(s.asin, curr);
+
+        durations.push(s.ms);
+
+        // Hour of day from local time
+        const hour = s.startDate.getHours();
+        hourCounts[hour] += 1;
+      }
+
+      const uniqueBooks = perBook.size;
+
+      return { totalMs, firstDate, lastDate, uniqueBooks, perDay, perBook, durations, hourCounts };
+    }
+
+    function destroyChart(key) {
+      const c = state.charts[key];
+      if (c) {
+        c.destroy();
+        delete state.charts[key];
+      }
+    }
+
+    function renderMetrics(agg) {
+      els.totalTime.textContent = humanizeMs(agg.totalMs);
+      els.sessionCount.textContent = String(state.sessions.length);
+      els.uniqueBooks.textContent = String(agg.uniqueBooks);
+      els.dateRange.textContent = agg.firstDate && agg.lastDate
+        ? agg.firstDate.toISOString().slice(0,10) + ' → ' + agg.lastDate.toISOString().slice(0,10)
+        : '—';
+    }
+
+    function renderPerDayChart(agg) {
+      destroyChart('perDay');
+
+      const labels = Array.from(agg.perDay.keys()).sort();
+      const data = labels.map(k => agg.perDay.get(k) / 3600000); // hours
+
+      state.charts.perDay = new Chart(els.perDayChart, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Hours per day',
+            data,
+            borderColor: '#4e79a7',
+            backgroundColor: 'rgba(78,121,167,0.2)',
+            tension: 0.2,
+            fill: true,
+            pointRadius: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            y: { title: { text: 'Hours', display: true }, beginAtZero: true }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => `${ctx.parsed.y.toFixed(2)} h`
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function renderPerBookChart(agg) {
+      destroyChart('perBook');
+
+      const allItems = Array.from(agg.perBook.entries())
+        .map(([asin, v]) => ({ asin, name: v.name, ms: v.ms }))
+        .sort((a,b) => b.ms - a.ms);
+      const limit = state.options.topN === Infinity ? allItems.length : state.options.topN;
+      const items = allItems.slice(0, limit);
+
+      const labels = items.map(i => i.name.length > 40 ? i.name.slice(0,37) + '…' : i.name);
+      const data = items.map(i => i.ms / 3600000);
+      const colors = items.map((_, i) => `hsl(${(i * 47) % 360} 65% 55%)`);
+      els.perBookChart.style.height = Math.max(300, labels.length * 28 + 100) + 'px';
+
+      state.charts.perBook = new Chart(els.perBookChart, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Hours',
+            data,
+            backgroundColor: colors,
+            borderColor: colors,
+            borderWidth: 0,
+            borderRadius: 6,
+            barThickness: 14
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.6 } },
+          scales: {
+            x: { title: { text: 'Hours', display: true }, beginAtZero: true, position: 'top' },
+            y: { ticks: { autoSkip: false }, title: { display: true, text: 'Books' } }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: (ctx) => `${ctx.raw.toFixed(2)} h` } }
+          }
+        }
+      });
+    }
+
+    function renderHistogram(agg) {
+      destroyChart('hist');
+
+      // Bins in minutes
+      const bins = [
+        { label: '< 1m', min: 0, max: 1 },
+        { label: '1–5m', min: 1, max: 5 },
+        { label: '5–15m', min: 5, max: 15 },
+        { label: '15–30m', min: 15, max: 30 },
+        { label: '30–60m', min: 30, max: 60 },
+        { label: '1–2h', min: 60, max: 120 },
+        { label: '≥ 2h', min: 120, max: Infinity }
+      ];
+      const counts = new Array(bins.length).fill(0);
+
+      for (const ms of agg.durations) {
+        const m = ms / 60000;
+        const idx = bins.findIndex(b => m >= b.min && m < b.max);
+        counts[idx === -1 ? bins.length - 1 : idx] += 1;
+      }
+
+      state.charts.hist = new Chart(els.histChart, {
+        type: 'bar',
+        data: {
+          labels: bins.map(b => b.label),
+          datasets: [{
+            label: 'Sessions',
+            data: counts,
+            backgroundColor: '#f28e2b'
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true } },
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+
+    function renderHourChart(agg) {
+      destroyChart('hour');
+
+      const labels = Array.from({ length: 24 }, (_, i) => i.toString().padStart(2,'0') + ':00');
+      const data = agg.hourCounts;
+
+      state.charts.hour = new Chart(els.hourChart, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Sessions',
+            data,
+            backgroundColor: '#e15759'
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { title: { text: 'Hour (local time)', display: true } },
+            y: { beginAtZero: true }
+          },
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+
+    function renderAll() {
+      const agg = aggregate(state.sessions);
+      renderMetrics(agg);
+      renderPerDayChart(agg);
+      renderPerBookChart(agg);
+      renderHistogram(agg);
+      renderHourChart(agg);
+    }
+
+    function applyOptionsAndRender() {
+      state.options.excludeZero = els.excludeZero.checked;
+      state.options.excludeNA = els.excludeNA.checked;
+      const n = parseInt(els.topN.value, 10);
+      state.options.topN = Number.isFinite(n) && n > 0 ? n : Infinity;
+      state.sessions = filterSessions(state.rawRows, state.options);
+      renderAll();
+    }
+
+    function handleParsed(results) {
+      const rows = (results?.data ?? []).map(normalizeRow);
+      state.rawRows = rows;
+      applyOptionsAndRender();
+    }
+
+    function parseFile(file) {
+      if (!file) return;
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        worker: false,
+        complete: handleParsed,
+        error(err) {
+          alert('Failed to parse CSV: ' + err);
+        }
+      });
+    }
+
+    function parseText(text) {
+      if (!text) return;
+      Papa.parse(text, {
+        header: true,
+        skipEmptyLines: true,
+        worker: false,
+        complete: handleParsed,
+        error(err) {
+          alert('Failed to parse CSV text: ' + err);
+        }
+      });
+    }
+
+    async function loadDefaultCsv() {
+      try {
+        const resp = await fetch('Kindle.reading-insights-sessions_with_adjustments.csv', { cache: 'no-cache' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const text = await resp.text();
+        parseText(text);
+      } catch (err) {
+        console.warn('Could not load default CSV from repo:', err);
+      }
+    }
+
+    function setupFileHandlers() {
+      els.fileInput.addEventListener('change', (e) => {
+        const file = e.target.files?.[0];
+        parseFile(file);
+      });
+
+      const dz = els.dropzone;
+      dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
+      dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+      dz.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dz.classList.remove('dragover');
+        const file = e.dataTransfer.files?.[0];
+        parseFile(file);
+      });
+    }
+
+    function setupOptionHandlers() {
+      els.excludeZero.addEventListener('change', applyOptionsAndRender);
+      els.excludeNA.addEventListener('change', applyOptionsAndRender);
+      els.topN.addEventListener('change', applyOptionsAndRender);
+    }
+
+    (function init() {
+      setupFileHandlers();
+      setupOptionHandlers();
+      loadDefaultCsv();
+    })();
+  </script>
+</body>
+</html>
